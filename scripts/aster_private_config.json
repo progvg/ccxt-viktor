@@ -1,0 +1,11 @@
+﻿{
+  "apiKey": "ed4da7cf86641f1038e7a2df5ed3c5f818f7223d6c55a7d73790cdb9914027b7",
+  "secret": "17fff3f1f4cda7a5a4bbf581a37b0bfba9861787f1e49518c0c1d7e2ec916138",
+  "symbol": "BTC/USDT",
+  "side": "buy",
+  "priceOffset": 0.30,
+  "testOrderQuoteCost": 10.0,
+  "recvWindow": 5000,
+  "timeout": 20000
+}
+
