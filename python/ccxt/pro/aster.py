@@ -33,6 +33,22 @@ class aster(binance):
             },
         })
 
+    # Normalize high-precision timestamps (µs/ns) to milliseconds
+    def iso8601(self, timestamp=None):
+        if timestamp is None:
+            return timestamp
+        # delegate non-int (e.g. str) to parent which will handle parsing/safety
+        if not isinstance(timestamp, int):
+            return super(aster, self).iso8601(timestamp)
+        ts = int(timestamp)
+        if ts > 100000000000000000:  # ns
+            ts //= 1000000
+        elif ts > 100000000000000:   # µs
+            ts //= 1000
+        elif ts < 100000000000:      # s
+            ts *= 1000
+        return super(aster, self).iso8601(ts)
+
     async def authenticate(self, params={}):
         # Use REST aster client to obtain listenKey reliably
         time = self.milliseconds()
