@@ -1127,16 +1127,24 @@ class Exchange(object):
         return int(time.time() * 1000000)
 
     @staticmethod
-    def iso8601(timestamp=None):
+    def iso8601(timestamp=None, extra=None):
+        # Be tolerant to accidental extra argument (e.g. iso8601(self, ts))
+        # If two args are given and the first is not a timestamp, use the second.
+        if extra is not None and not isinstance(timestamp, (int, float, str)):
+            timestamp = extra
         if timestamp is None:
             return timestamp
         if not isinstance(timestamp, int):
-            return None
+            # attempt to coerce numeric-like strings
+            try:
+                timestamp = int(timestamp)
+            except Exception:
+                return None
         if int(timestamp) < 0:
             return None
 
         try:
-            utc = datetime.datetime.fromtimestamp(timestamp // 1000, datetime.timezone.utc)
+            utc = datetime.datetime.fromtimestamp(int(timestamp) // 1000, datetime.timezone.utc)
             return utc.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-6] + "{:03d}".format(int(timestamp) % 1000) + 'Z'
         except (TypeError, OverflowError, OSError):
             return None
