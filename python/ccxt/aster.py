@@ -5,6 +5,7 @@ from ccxt.abstract.aster import ImplicitAPI
 from ccxt.base.types import Any
 from ccxt.base.errors import AuthenticationError, InvalidNonce, ArgumentsRequired, BadRequest
 from ccxt.base.errors import InvalidAddress, NotSupported
+from ccxt.base.exchange import Exchange
 
 
 class aster(ImplicitAPI, binance):
@@ -68,7 +69,7 @@ class aster(ImplicitAPI, binance):
             return timestamp
         # if it's a string or non-int, defer to parent
         if not isinstance(timestamp, int):
-            return super(aster, self).iso8601(timestamp)
+            return Exchange.iso8601(timestamp)
         ts = int(timestamp)
         # Normalize to milliseconds:
         # - ns (> 1e17) -> // 1e6
@@ -80,7 +81,7 @@ class aster(ImplicitAPI, binance):
             ts = ts // 1000
         elif ts < 100000000000:      # < 1e11, seconds
             ts = ts * 1000
-        return super(aster, self).iso8601(ts)
+        return Exchange.iso8601(ts)
 
     def fetch_balance(self, params={}):
         result = super(aster, self).fetch_balance(params)
@@ -95,7 +96,7 @@ class aster(ImplicitAPI, binance):
             elif norm < 100000000000:      # s
                 norm *= 1000
             result['timestamp'] = norm
-            result['datetime'] = super(aster, self).iso8601(norm)
+            result['datetime'] = Exchange.iso8601(norm)
         return result
 
     def withdraw(self, code: str, amount, address: str, tag=None, params={}):

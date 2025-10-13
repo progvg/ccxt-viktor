@@ -4,6 +4,7 @@
 
 from ccxt.pro.binance import binance
 from ccxt.base.types import Any
+from ccxt.base.exchange import Exchange
 
 import ccxt.async_support.aster as asterRest
 
@@ -37,9 +38,9 @@ class aster(binance):
     def iso8601(self, timestamp=None):
         if timestamp is None:
             return timestamp
-        # delegate non-int (e.g. str) to parent which will handle parsing/safety
+        # delegate non-int (e.g. str) to base static helper
         if not isinstance(timestamp, int):
-            return super(aster, self).iso8601(timestamp)
+            return Exchange.iso8601(timestamp)
         ts = int(timestamp)
         if ts > 100000000000000000:  # ns
             ts //= 1000000
@@ -47,7 +48,7 @@ class aster(binance):
             ts //= 1000
         elif ts < 100000000000:      # s
             ts *= 1000
-        return super(aster, self).iso8601(ts)
+        return Exchange.iso8601(ts)
 
     async def authenticate(self, params={}):
         # Use REST aster client to obtain listenKey reliably
