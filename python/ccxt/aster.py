@@ -82,6 +82,22 @@ class aster(ImplicitAPI, binance):
             ts = ts * 1000
         return super(aster, self).iso8601(ts)
 
+    def fetch_balance(self, params={}):
+        result = super(aster, self).fetch_balance(params)
+        # Normalize top-level timestamp to milliseconds for consistency
+        ts = self.safe_integer(result, 'timestamp')
+        if ts is not None:
+            norm = ts
+            if norm > 100000000000000000:  # ns
+                norm //= 1000000
+            elif norm > 100000000000000:   # µs
+                norm //= 1000
+            elif norm < 100000000000:      # s
+                norm *= 1000
+            result['timestamp'] = norm
+            result['datetime'] = super(aster, self).iso8601(norm)
+        return result
+
     def withdraw(self, code: str, amount, address: str, tag=None, params={}):
         self.load_markets()
         if not address:
