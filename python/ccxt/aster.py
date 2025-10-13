@@ -61,6 +61,27 @@ class aster(ImplicitAPI, binance):
             }),
         })
 
+    # Aster may return timestamps with higher precision (µs or ns).
+    # Normalize to milliseconds before delegating to the base iso8601.
+    def iso8601(self, timestamp=None):
+        if timestamp is None:
+            return timestamp
+        # if it's a string or non-int, defer to parent
+        if not isinstance(timestamp, int):
+            return super(aster, self).iso8601(timestamp)
+        ts = int(timestamp)
+        # Normalize to milliseconds:
+        # - ns (> 1e17) -> // 1e6
+        # - µs (> 1e14) -> // 1e3
+        # - s  (< 1e11) -> * 1e3
+        if ts > 100000000000000000:  # > 1e17, nanoseconds
+            ts = ts // 1000000
+        elif ts > 100000000000000:   # > 1e14, microseconds
+            ts = ts // 1000
+        elif ts < 100000000000:      # < 1e11, seconds
+            ts = ts * 1000
+        return super(aster, self).iso8601(ts)
+
     def withdraw(self, code: str, amount, address: str, tag=None, params={}):
         self.load_markets()
         if not address:

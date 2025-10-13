@@ -137,7 +137,7 @@ async def main():
                 if sid is None or oid == sid:
                     print(f"order event: id={oid} status={status} side={u.get('side')} type={u.get('type')} amount={u.get('amount')} price={u.get('price')}")
                     if sid is not None and oid == sid:
-                        received_for_id.append(status)
+                        print('ORDER EVENT(ccxt):', {'id': oid, 'status': status, 'side': u.get('side'), 'type': u.get('type'), 'price': u.get('price'), 'amount': u.get('amount')}); received_for_id.append(status)
 
     consumer_task = asyncio.create_task(orders_consumer())
 
@@ -190,5 +190,6 @@ if __name__ == '__main__':
     except Exception:
         pass
     asyncio.run(main())
+
 
 
