@@ -73,6 +73,12 @@ def run_test(market_type, cli_symbol=None):
     except Exception as e:
         print(f"fetch_ticker error: {e}")
 
+    try:
+        tickers = ex.fetch_tickers()
+        print(f"fetch_tickers: got {len(tickers)} symbols")
+    except Exception as e:
+        print(f"fetch_tickers error: {e}")
+
 
 def main():
     add_local_ccxt_to_path()

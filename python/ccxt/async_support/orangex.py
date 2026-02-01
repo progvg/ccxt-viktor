@@ -28,7 +28,7 @@ class orangex(ImplicitAPI, Exchange):
                 'fetchMarkets': True,
                 'fetchOrderBook': True,
                 'fetchTicker': True,
-                'fetchTickers': False,
+                'fetchTickers': True,
                 'fetchTime': True,
                 'fetchTrades': False,
                 'fetchOHLCV': False,
@@ -225,6 +225,40 @@ class orangex(ImplicitAPI, Exchange):
         result = self.safe_value(response, 'result', [])
         ticker = result[0] if isinstance(result, list) and (len(result) > 0) else result
         return self.parse_ticker(ticker, market)
+
+    async def fetch_tickers(self, symbols=None, params={}):
+        await self.load_markets()
+        symbols = self.market_symbols(symbols)
+        market_type, params = self.handle_market_type_and_params('fetchTickers', None, params)
+        params = self.omit(params, 'currency')
+        types = []
+        if symbols is not None:
+            if market_type is None:
+                for symbol in symbols:
+                    market = self.market(symbol)
+                    types.append('swap' if market['swap'] else 'spot')
+                types = list(set(types))
+            else:
+                types = [market_type]
+        else:
+            if market_type is None:
+                market_type = self.safe_string(self.options, 'defaultType', 'spot')
+            types = [market_type]
+        tickers = []
+        for t in types:
+            currency = 'PERPETUAL' if t in ['swap', 'perpetual'] else 'SPOT'
+            response = await self.public_get_tickers(self.extend({'currency': currency}, params))
+            data = self.safe_list(response, 'result', [])
+            for entry in data:
+                market_id = self.safe_string(entry, 'instrument_name')
+                market = None
+                if market_id is not None:
+                    lookup_id = market_id
+                    if currency == 'SPOT' and not market_id.endswith('-SPOT'):
+                        lookup_id = market_id + '-SPOT'
+                    market = self.safe_market(lookup_id, None, None, 'spot' if currency == 'SPOT' else 'swap')
+                tickers.append(self.parse_ticker(entry, market))
+        return self.filter_by_array_tickers(tickers, 'symbol', symbols)
 
     def parse_ticker(self, ticker, market=None):
         timestamp = self._normalize_timestamp(self.safe_integer(ticker, 'timestamp'))
