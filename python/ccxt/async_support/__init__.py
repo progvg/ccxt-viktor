@@ -152,6 +152,7 @@ from ccxt.async_support.okcoin import okcoin                                    
 from ccxt.async_support.okx import okx                                          # noqa: F401
 from ccxt.async_support.okxus import okxus                                      # noqa: F401
 from ccxt.async_support.onetrading import onetrading                            # noqa: F401
+from ccxt.async_support.orangex import orangex                                  # noqa: F401
 from ccxt.async_support.oxfun import oxfun                                      # noqa: F401
 from ccxt.async_support.p2b import p2b                                          # noqa: F401
 from ccxt.async_support.paradex import paradex                                  # noqa: F401
@@ -261,6 +262,7 @@ exchanges = [
     'okx',
     'okxus',
     'onetrading',
+    'orangex',
     'oxfun',
     'p2b',
     'paradex',

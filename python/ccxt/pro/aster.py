@@ -32,6 +32,10 @@ class aster(binance):
                 },
                 'doc': 'https://sapi.asterdex.com',
             },
+            'streaming': {
+                # send WS ping frames more frequently to avoid idle drops
+                'keepAlive': 30000,
+            },
         })
 
     # Normalize high-precision timestamps (µs/ns) to milliseconds

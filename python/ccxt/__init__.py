@@ -172,6 +172,7 @@ from ccxt.okcoin import okcoin                                        # noqa: F4
 from ccxt.okx import okx                                              # noqa: F401
 from ccxt.okxus import okxus                                          # noqa: F401
 from ccxt.onetrading import onetrading                                # noqa: F401
+from ccxt.orangex import orangex                                      # noqa: F401
 from ccxt.oxfun import oxfun                                          # noqa: F401
 from ccxt.p2b import p2b                                              # noqa: F401
 from ccxt.paradex import paradex                                      # noqa: F401
@@ -281,6 +282,7 @@ exchanges = [
     'okx',
     'okxus',
     'onetrading',
+    'orangex',
     'oxfun',
     'p2b',
     'paradex',
