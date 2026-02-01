@@ -5,6 +5,7 @@ from ccxt.abstract.orangex import ImplicitAPI
 from ccxt.base.types import Any
 from ccxt.base.errors import AuthenticationError, ExchangeError
 from ccxt.base.exchange import Exchange as SyncExchange
+from ccxt.base.decimal_to_precision import DECIMAL_PLACES
 
 
 class orangex(ImplicitAPI, Exchange):
@@ -30,6 +31,17 @@ class orangex(ImplicitAPI, Exchange):
                 'fetchTicker': True,
                 'fetchTickers': True,
                 'fetchTime': True,
+                'fetchBalance': True,
+                'createOrder': True,
+                'cancelOrder': True,
+                'cancelAllOrders': True,
+                'fetchOrder': True,
+                'fetchOpenOrders': True,
+                'fetchOrders': True,
+                'fetchClosedOrders': True,
+                'fetchMyTrades': True,
+                'fetchPositions': True,
+                'closePosition': True,
                 'fetchTrades': False,
                 'fetchOHLCV': False,
             }),
@@ -42,11 +54,20 @@ class orangex(ImplicitAPI, Exchange):
                 'www': 'https://www.orangex.com',
                 'doc': 'https://openapi-docs.orangex.com',
             },
+            'precisionMode': DECIMAL_PLACES,
             'options': self.deep_extend(parent.get('options', {}), {
                 'defaultType': 'spot',
                 'fetchMarkets': {
                     'types': ['spot', 'swap'],
                 },
+                'timeInForce': {
+                    'GTC': 'good_til_cancelled',
+                    'IOC': 'immediate_or_cancel',
+                    'FOK': 'fill_or_kill',
+                },
+                'accessToken': None,
+                'refreshToken': None,
+                'expires': None,
             }),
         })
 
@@ -285,12 +306,421 @@ class orangex(ImplicitAPI, Exchange):
             'info': ticker,
         }, market)
 
+    async def sign_in(self, params={}):
+        """
+        sign in, must be called prior to using other authenticated methods
+        """
+        self.check_required_credentials()
+        request = {
+            'grant_type': 'client_credentials',
+            'client_id': self.apiKey,
+            'client_secret': self.secret,
+        }
+        rpc_request = {
+            'jsonrpc': '2.0',
+            'id': self.nonce(),
+            'method': '/public/auth',
+            'params': self.extend(request, params),
+        }
+        response = await self.public_post_auth(rpc_request)
+        result = self.safe_value(response, 'result', {})
+        access_token = self.safe_string(result, 'access_token')
+        if access_token is None:
+            raise AuthenticationError(self.id + ' signIn failed')
+        self.options['accessToken'] = access_token
+        self.options['refreshToken'] = self.safe_string(result, 'refresh_token')
+        expires_in = self.safe_integer(result, 'expires_in')
+        if expires_in is not None:
+            self.options['expires'] = self.sum(self.milliseconds(), expires_in * 1000)
+        return response
+
+    async def fetch_balance(self, params={}):
+        await self.load_markets()
+        market_type, params = self.handle_market_type_and_params('fetchBalance', None, params)
+        asset_type = self.safe_string(params, 'asset_type')
+        if asset_type is None:
+            if market_type is None:
+                market_type = self.safe_string(self.options, 'defaultType', 'spot')
+            if market_type in ['spot']:
+                asset_type = 'SPOT'
+            elif market_type in ['swap', 'perpetual']:
+                asset_type = 'PERPETUAL'
+            elif market_type in ['wallet']:
+                asset_type = 'WALLET'
+            else:
+                asset_type = 'ALL'
+        params = self.omit(params, ['type', 'asset_type'])
+        request = {
+            'asset_type': asset_type if isinstance(asset_type, list) else [asset_type],
+        }
+        response = await self.private_post_get_assets_info(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        section = self.safe_value(result, asset_type, {})
+        if asset_type == 'ALL':
+            section = result
+        balance = {
+            'info': response,
+        }
+        details = self.safe_list(section, 'details', [])
+        for entry in details:
+            currency_id = self.safe_string(entry, 'coin_type')
+            code = self.safe_currency_code(currency_id)
+            if code is None:
+                continue
+            free = self.safe_number(entry, 'available')
+            used = self.safe_number(entry, 'freeze')
+            total = self.safe_number(entry, 'total')
+            if total is None:
+                total = self.sum(free, used)
+            balance[code] = {
+                'free': free,
+                'used': used,
+                'total': total,
+            }
+        return self.safe_balance(balance)
+
+    def parse_order_status(self, status):
+        statuses = {
+            'open': 'open',
+            'filled': 'closed',
+            'canceled': 'canceled',
+            'cancelled': 'canceled',
+            'rejected': 'rejected',
+            'expired': 'expired',
+        }
+        return self.safe_string(statuses, status, status)
+
+    def parse_order(self, order, market=None):
+        market_id = self.safe_string(order, 'instrument_name')
+        market = self.safe_market(market_id, market)
+        symbol = market['symbol'] if market is not None else None
+        timestamp = self._normalize_timestamp(self.safe_integer(order, 'creation_timestamp'))
+        last_update = self._normalize_timestamp(self.safe_integer(order, 'last_update_timestamp'))
+        side = self.safe_string(order, 'direction')
+        type = self.safe_string(order, 'order_type')
+        price = self.safe_number(order, 'price')
+        amount = self.safe_number(order, 'amount')
+        filled = self.safe_number(order, 'filled_amount')
+        average = self.safe_number(order, 'average_price')
+        status = self.parse_order_status(self.safe_string(order, 'order_state'))
+        remaining = None
+        if (amount is not None) and (filled is not None):
+            remaining = max(amount - filled, 0)
+        cost = None
+        if (average is not None) and (filled is not None):
+            cost = average * filled
+        client_order_id = self.safe_string(order, 'label')
+        return self.safe_order({
+            'id': self.safe_string(order, 'order_id'),
+            'clientOrderId': client_order_id,
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': last_update,
+            'status': status,
+            'symbol': symbol,
+            'type': type,
+            'side': side,
+            'price': price,
+            'amount': amount,
+            'filled': filled,
+            'remaining': remaining,
+            'average': average,
+            'cost': cost,
+            'timeInForce': self.safe_string(order, 'time_in_force'),
+            'postOnly': self.safe_bool(order, 'post_only'),
+            'reduceOnly': self.safe_bool(order, 'reduce_only'),
+            'info': order,
+        }, market)
+
+    def parse_trade(self, trade, market=None):
+        market_id = self.safe_string(trade, 'instrument_name')
+        market = self.safe_market(market_id, market)
+        symbol = market['symbol'] if market is not None else None
+        timestamp = self._normalize_timestamp(self.safe_integer(trade, 'timestamp'))
+        fee = None
+        fee_cost = self.safe_number(trade, 'fee')
+        if fee_cost is not None:
+            fee_currency = self.safe_currency_code(self.safe_string(trade, 'fee_coin_type'))
+            fee = {
+                'cost': fee_cost,
+                'currency': fee_currency,
+            }
+        return self.safe_trade({
+            'id': self.safe_string(trade, 'trade_id'),
+            'orderId': self.safe_string(trade, 'order_id'),
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'symbol': symbol,
+            'type': self.safe_string(trade, 'order_type'),
+            'side': self.safe_string(trade, 'direction'),
+            'price': self.safe_number(trade, 'price'),
+            'amount': self.safe_number(trade, 'amount'),
+            'takerOrMaker': self.safe_string(trade, 'role'),
+            'fee': fee,
+            'info': trade,
+        }, market)
+
+    def parse_position(self, position, market=None):
+        market_id = self.safe_string(position, 'instrument_name')
+        market = self.safe_market(market_id, market, None, 'swap')
+        symbol = market['symbol'] if market is not None else None
+        size = self.safe_number(position, 'size')
+        direction = self.safe_string(position, 'direction')
+        side = None
+        if size is not None:
+            side = 'short' if size < 0 else 'long'
+        elif direction is not None:
+            side = 'short' if direction == 'sell' else 'long'
+        contracts = None
+        if size is not None:
+            contracts = abs(size)
+        entry_price = self.safe_number_2(position, 'average_price', 'session_price')
+        return self.safe_position({
+            'info': position,
+            'symbol': symbol,
+            'timestamp': None,
+            'datetime': None,
+            'initialMargin': None,
+            'initialMarginPercentage': None,
+            'maintenanceMargin': None,
+            'maintenanceMarginPercentage': None,
+            'entryPrice': entry_price,
+            'notional': None,
+            'leverage': None,
+            'unrealizedPnl': self.safe_number(position, 'floating_profit_loss'),
+            'realizedPnl': self.safe_number(position, 'realized_profit_loss'),
+            'contracts': contracts,
+            'contractSize': None,
+            'marginRatio': None,
+            'liquidationPrice': None,
+            'markPrice': self.safe_number(position, 'mark_price'),
+            'lastPrice': None,
+            'collateral': None,
+            'marginMode': None,
+            'side': side,
+            'percentage': None,
+            'hedged': None,
+            'stopLossPrice': None,
+            'takeProfitPrice': None,
+        })
+
+    async def create_order(self, symbol: str, type: str, side: str, amount: float, price=None, params={}):
+        await self.load_markets()
+        market = self.market(symbol)
+        side = side.lower()
+        if side not in ['buy', 'sell']:
+            raise ExchangeError(self.id + ' createOrder() side must be "buy" or "sell"')
+        request = {
+            'instrument_name': market['id'],
+            'amount': self.amount_to_precision(symbol, amount),
+            'type': type,
+        }
+        if price is not None:
+            request['price'] = self.price_to_precision(symbol, price)
+        client_order_id = self.safe_string_2(params, 'clientOrderId', 'label')
+        if client_order_id is not None:
+            request['label'] = client_order_id
+        time_in_force = self.safe_string_2(params, 'timeInForce', 'time_in_force')
+        if time_in_force is not None:
+            time_in_force_map = self.safe_value(self.options, 'timeInForce', {})
+            request['time_in_force'] = self.safe_string(time_in_force_map, time_in_force, time_in_force)
+        post_only = self.safe_value(params, 'postOnly')
+        if post_only is None:
+            post_only = self.safe_value(params, 'post_only')
+        if post_only is not None:
+            request['post_only'] = post_only
+        reduce_only = self.safe_value(params, 'reduceOnly')
+        if reduce_only is None:
+            reduce_only = self.safe_value(params, 'reduce_only')
+        if reduce_only is not None:
+            request['reduce_only'] = reduce_only
+        params = self.omit(params, ['clientOrderId', 'clientOrderID', 'label', 'timeInForce', 'time_in_force', 'postOnly', 'post_only', 'reduceOnly', 'reduce_only'])
+        method = self.private_post_buy if side == 'buy' else self.private_post_sell
+        response = await method(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        order = self.safe_value(result, 'order', {})
+        order_id = self.safe_string(order, 'order_id')
+        order = self.extend(order, request)
+        order['order_id'] = order_id
+        return self.parse_order(order, market)
+
+    async def cancel_order(self, id: str, symbol: str = None, params={}):
+        request = {
+            'order_id': id,
+        }
+        response = await self.private_post_cancel(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        order_id = self.safe_string(result, 'order_id', id)
+        market = None
+        if symbol is not None:
+            await self.load_markets()
+            market = self.market(symbol)
+        return self.parse_order({
+            'order_id': order_id,
+            'order_state': 'canceled',
+            'instrument_name': market['id'] if market is not None else None,
+        }, market)
+
+    async def cancel_all_orders(self, symbol: str = None, params={}):
+        await self.load_markets()
+        request = {}
+        if symbol is not None:
+            market = self.market(symbol)
+            request['instrument_name'] = market['id']
+            return await self.private_post_cancel_all_by_instrument(self.extend(request, params))
+        market_type, params = self.handle_market_type_and_params('cancelAllOrders', None, params)
+        currency = self.safe_string(params, 'currency')
+        if currency is None:
+            if market_type is None:
+                market_type = self.safe_string(self.options, 'defaultType', 'spot')
+            currency = 'PERPETUAL' if market_type in ['swap', 'perpetual'] else 'SPOT'
+        params = self.omit(params, 'currency')
+        request['currency'] = currency
+        return await self.private_post_cancel_all_by_currency(self.extend(request, params))
+
+    async def fetch_order(self, id: str, symbol: str = None, params={}):
+        request = {
+            'order_id': id,
+        }
+        response = await self.private_post_get_order_state(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        market = None
+        if symbol is not None:
+            await self.load_markets()
+            market = self.market(symbol)
+        return self.parse_order(result, market)
+
+    async def fetch_open_orders(self, symbol: str = None, since=None, limit=None, params={}):
+        await self.load_markets()
+        request = {}
+        market = None
+        if symbol is not None:
+            market = self.market(symbol)
+            request['instrument_name'] = market['id']
+            response = await self.private_post_get_open_orders_by_instrument(self.extend(request, params))
+        else:
+            market_type, params = self.handle_market_type_and_params('fetchOpenOrders', None, params)
+            currency = self.safe_string(params, 'currency')
+            if currency is None:
+                if market_type is None:
+                    market_type = self.safe_string(self.options, 'defaultType', 'spot')
+                currency = 'PERPETUAL' if market_type in ['swap', 'perpetual'] else 'SPOT'
+            params = self.omit(params, 'currency')
+            request['currency'] = currency
+            response = await self.private_post_get_open_orders_by_currency(self.extend(request, params))
+        result = self.safe_list(response, 'result', [])
+        return self.parse_orders(result, market, since, limit)
+
+    async def fetch_orders(self, symbol: str = None, since=None, limit=None, params={}):
+        await self.load_markets()
+        request = {}
+        market = None
+        if limit is not None:
+            request['count'] = limit
+        if symbol is not None:
+            market = self.market(symbol)
+            request['instrument_name'] = market['id']
+            response = await self.private_post_get_order_history_by_instrument(self.extend(request, params))
+        else:
+            market_type, params = self.handle_market_type_and_params('fetchOrders', None, params)
+            currency = self.safe_string(params, 'currency')
+            if currency is None:
+                if market_type is None:
+                    market_type = self.safe_string(self.options, 'defaultType', 'spot')
+                currency = 'PERPETUAL' if market_type in ['swap', 'perpetual'] else 'SPOT'
+            params = self.omit(params, 'currency')
+            request['currency'] = currency
+            response = await self.private_post_get_order_history_by_currency(self.extend(request, params))
+        result = self.safe_list(response, 'result', [])
+        return self.parse_orders(result, market, since, limit)
+
+    async def fetch_my_trades(self, symbol: str = None, since=None, limit=None, params={}):
+        await self.load_markets()
+        request = {}
+        market = None
+        if since is not None:
+            request['start_timestamp'] = since
+        if limit is not None:
+            request['count'] = limit
+        order_id = self.safe_string_2(params, 'order_id', 'orderId')
+        if order_id is not None:
+            params = self.omit(params, ['order_id', 'orderId'])
+            request['order_id'] = order_id
+            response = await self.private_post_get_user_trades_by_order(self.extend(request, params))
+        elif symbol is not None:
+            market = self.market(symbol)
+            request['instrument_name'] = market['id']
+            response = await self.private_post_get_user_trades_by_instrument(self.extend(request, params))
+        else:
+            market_type, params = self.handle_market_type_and_params('fetchMyTrades', None, params)
+            currency = self.safe_string(params, 'currency')
+            if currency is None:
+                if market_type is None:
+                    market_type = self.safe_string(self.options, 'defaultType', 'spot')
+                currency = 'PERPETUAL' if market_type in ['swap', 'perpetual'] else 'SPOT'
+            params = self.omit(params, 'currency')
+            request['currency'] = currency
+            response = await self.private_post_get_user_trades_by_currency(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        trades = self.safe_list(result, 'trades', result)
+        return self.parse_trades(trades, market, since, limit)
+
+    async def fetch_positions(self, symbols=None, params={}):
+        await self.load_markets()
+        market_type, params = self.handle_market_type_and_params('fetchPositions', None, params)
+        currency = self.safe_string(params, 'currency')
+        if currency is None:
+            if market_type is None:
+                market_type = self.safe_string(self.options, 'defaultType', 'spot')
+            if market_type in ['swap', 'perpetual']:
+                currency = 'PERPETUAL'
+            else:
+                currency = 'SPOT'
+        params = self.omit(params, 'currency')
+        request = {
+            'currency': currency,
+        }
+        response = await self.private_post_get_positions(self.extend(request, params))
+        result = self.safe_list(response, 'result', [])
+        positions = []
+        for position in result:
+            positions.append(self.parse_position(position))
+        return self.filter_by_array_positions(positions, 'symbol', self.market_symbols(symbols), False)
+
+    async def close_position(self, symbol: str, side: str = None, params={}):
+        await self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'instrument_name': market['id'],
+        }
+        order_type = self.safe_string(params, 'type')
+        if order_type is not None:
+            request['type'] = order_type
+        price = self.safe_number(params, 'price')
+        if price is not None:
+            request['price'] = self.price_to_precision(symbol, price)
+        params = self.omit(params, ['type', 'price'])
+        response = await self.private_post_close_position(self.extend(request, params))
+        result = self.safe_value(response, 'result', {})
+        order = self.safe_value(result, 'order', {})
+        order_id = self.safe_string(order, 'order_id')
+        order = self.extend(order, request)
+        order['order_id'] = order_id
+        return self.parse_order(order, market)
+
     def sign(self, path, api='public', method='POST', params={}, headers=None, body=None):
         url = self.urls['api'][api] + '/' + api + '/' + path
         if method == 'GET':
             if params:
                 url += '?' + self.urlencode(params)
         else:
+            if (api == 'private') and (not self.safe_string(params, 'jsonrpc')):
+                params = {
+                    'jsonrpc': '2.0',
+                    'id': self.nonce(),
+                    'method': '/' + api + '/' + path,
+                    'params': params,
+                }
             body = self.json(params) if params else None
             headers = {
                 'Content-Type': 'application/json',
@@ -299,6 +729,9 @@ class orangex(ImplicitAPI, Exchange):
             if headers is None:
                 headers = {}
             self.check_required_credentials()
+            expires = self.safe_integer(self.options, 'expires')
+            if (expires is not None) and (expires < self.milliseconds()):
+                raise AuthenticationError(self.id + ' access token expired, call signIn() method')
             token = self.safe_string(self.options, 'accessToken')
             if token is None:
                 raise AuthenticationError(self.id + ' missing access token in options["accessToken"]')
