@@ -25,8 +25,10 @@ class aster(binance):
                 'api': {
                     'ws': {
                         'spot': 'wss://sstream.asterdex.com/ws',
+                        'future': 'wss://fstream.asterdex.com/ws',
                         'ws-api': {
                             'spot': None,
+                            'future': None,
                         },
                     },
                 },
@@ -55,29 +57,41 @@ class aster(binance):
         return Exchange.iso8601(ts)
 
     async def authenticate(self, params={}):
-        # Use REST aster client to obtain listenKey reliably
+        # Use REST aster client to obtain listenKey reliably (spot or futures)
         time = self.milliseconds()
         mtype = None
         mtype, params = self.handle_market_type_and_params('authenticate', None, params)
+        subType = None
+        subType, params = self.handle_sub_type_and_params('authenticate', None, params)
         if mtype is None:
             mtype = 'spot'
+        if self.isLinear(mtype, subType):
+            mtype = 'future'
+        elif self.isInverse(mtype, subType):
+            mtype = 'delivery'
         options = self.safe_value(self.options, mtype, {})
         lastAuthenticatedTime = self.safe_integer(options, 'lastAuthenticatedTime', 0)
         listenKeyRefreshRate = self.safe_integer(self.options, 'listenKeyRefreshRate', 1200000)
         delay = self.sum(listenKeyRefreshRate, 10000)
         listenKey = self.safe_string(options, 'listenKey')
         if (listenKey is None) or ((time - lastAuthenticatedTime) > delay):
-            # instantiate REST aster to call POST /api/v1/listenKey
             rest = asterRest({
                 'apiKey': self.apiKey,
                 'secret': self.secret,
                 'timeout': self.timeout,
                 'options': {
                     'recvWindow': self.safe_integer_2(self.options, 'recvWindow', 'spot', 5000),
+                    'defaultType': 'swap' if mtype == 'future' else 'spot',
                 },
             })
             try:
-                response = await rest.publicPostUserDataStream(params)
+                response = None
+                if mtype == 'future':
+                    response = await rest.fapiPrivatePostListenKey(params)
+                elif mtype == 'delivery':
+                    response = await rest.dapiPrivatePostListenKey(params)
+                else:
+                    response = await rest.publicPostUserDataStream(params)
             finally:
                 try:
                     await rest.close()

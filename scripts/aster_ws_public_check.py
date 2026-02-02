@@ -20,14 +20,25 @@ async def main():
     cli_symbol = sys.argv[1] if len(sys.argv) > 1 else None
     max_events = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 
-    ex = ccxtpro.aster()
+    market_type = os.environ.get('ASTER_MARKET_TYPE')
+    if cli_symbol and (':' in cli_symbol or 'PERPETUAL' in cli_symbol):
+        market_type = 'swap'
+    if market_type is None:
+        market_type = 'spot'
+
+    ex = ccxtpro.aster({'options': {'defaultType': market_type}})
     print('Using exchange (pro):', ex.id)
 
     # load markets & choose symbol
     await ex.load_markets()
-    preferred = [cli_symbol] if cli_symbol else [
-        'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'BTC/USDC', 'BNB/BTC', 'BTC/USD'
-    ]
+    if market_type == 'swap':
+        preferred = [cli_symbol] if cli_symbol else [
+            'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT'
+        ]
+    else:
+        preferred = [cli_symbol] if cli_symbol else [
+            'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'BTC/USDC', 'BNB/BTC', 'BTC/USD'
+        ]
     symbol = None
     for s in preferred:
         if s and s in ex.markets:
@@ -35,11 +46,14 @@ async def main():
             break
     if symbol is None:
         for m in ex.markets.values():
-            if m.get('spot'):
+            if market_type == 'swap' and m.get('swap'):
+                symbol = m['symbol']
+                break
+            if market_type == 'spot' and m.get('spot'):
                 symbol = m['symbol']
                 break
     if symbol is None:
-        print('No spot symbols found to test.')
+        print(f'No {market_type} symbols found to test.')
         await ex.close()
         return
     print('Testing symbol:', symbol)

@@ -18,12 +18,14 @@ def load_config(path):
         return json.load(fh)
 
 
-def pick_symbol(markets, preferred_list):
+def pick_symbol(markets, preferred_list, market_type):
     for s in preferred_list:
         if s and s in markets:
             return s
     for m in markets.values():
-        if m.get('spot'):
+        if market_type == 'swap' and m.get('swap'):
+            return m['symbol']
+        if market_type == 'spot' and m.get('spot'):
             return m['symbol']
     return None
 
@@ -99,13 +101,15 @@ def main():
         print('apiKey/secret missing in config:', config_path)
         sys.exit(1)
 
+    market_type = (cfg.get('marketType') or 'spot').lower()
+
     ex = ccxt.aster({
         'apiKey': apiKey,
         'secret': secret,
         'timeout': cfg.get('timeout', 20000),
         'options': {
             'recvWindow': cfg.get('recvWindow', 5000),
-            'defaultType': 'spot',
+            'defaultType': market_type,
         }
     })
 
@@ -126,9 +130,13 @@ def main():
 
     # markets
     markets = ex.load_markets()
-    symbol = pick_symbol(markets, [preferred_symbol, 'BTC/USDT', 'ETH/USDT', 'BNB/USDT'])
+    if market_type == 'swap':
+        fallback = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT']
+    else:
+        fallback = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']
+    symbol = pick_symbol(markets, [preferred_symbol] + fallback, market_type)
     if not symbol:
-        print('No suitable spot symbol found')
+        print(f'No suitable {market_type} symbol found')
         sys.exit(1)
     market = markets[symbol]
     print('Symbol:', symbol)
