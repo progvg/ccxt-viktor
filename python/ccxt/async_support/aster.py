@@ -72,6 +72,23 @@ class aster(ImplicitAPI, binance):
             ts *= 1000
         return SyncExchange.iso8601(ts)
 
+    async def fetch_markets(self, params={}):
+        # Ensure swap markets are included when defaultType targets derivatives
+        fetch_markets = self.safe_value(self.options, 'fetchMarkets', {})
+        types = []
+        if isinstance(fetch_markets, dict):
+            types = self.safe_list(fetch_markets, 'types', [])
+        elif isinstance(fetch_markets, list):
+            types = fetch_markets
+        default_type = self.safe_string_2(self.options, 'defaultType', 'type')
+        if default_type in ['swap', 'future', 'linear', 'perpetual']:
+            if 'linear' not in types:
+                types = (types or []) + ['linear']
+                self.options['fetchMarkets'] = self.extend(fetch_markets if isinstance(fetch_markets, dict) else {}, {
+                    'types': types,
+                })
+        return await super(aster, self).fetch_markets(params)
+
     async def fetch_balance(self, params={}):
         data = await super(aster, self).fetch_balance(params)
         # Ensure standard CCXT balance structure: free/used/total dicts
